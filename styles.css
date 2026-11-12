@@ -1,8 +1,18 @@
-/*
+/* Reading View styling */
+.discord-subtext {
+	font-size: var(--discord-subtext-size, 0.82em);
+	color: var(--discord-subtext-color, var(--text-muted));
+	margin: 0.25em 0;
+	line-height: 1.4;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+/* Live Preview (Editing View) line styling */
+.cm-line.discord-subtext-line {
+	font-size: var(--discord-subtext-size, 0.82em);
+	color: var(--discord-subtext-color, var(--text-muted));
+}
 
-If your plugin does not need CSS, delete this file.
-
-*/
+/* Live Preview: Dim the "-# " prefix when visible */
+.discord-subtext-syntax {
+	opacity: 0.45;
+}

@@ -1,114 +1,207 @@
 import {
+	App,
 	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
-	Modal,
-	Notice,
 	Plugin,
+	PluginSettingTab,
+	Setting,
+	editorLivePreviewField
 } from 'obsidian';
+import { RangeSetBuilder } from '@codemirror/state';
 import {
-	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
-} from './settings';
+	Decoration,
+	DecorationSet,
+	EditorView,
+	ViewPlugin,
+	ViewUpdate
+} from '@codemirror/view';
 
-// Remember to rename these classes and interfaces!
+// 1. Define Settings Interface & Defaults
+interface DiscordSubtextSettings {
+	fontSize: number;
+	textColor: string;
+	hideSyntaxInLivePreview: boolean;
+}
 
-export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
+const DEFAULT_SETTINGS: DiscordSubtextSettings = {
+	fontSize: 0.82,
+	textColor: 'var(--text-muted)',
+	hideSyntaxInLivePreview: true
+};
+
+// 2. Live Preview (Editing View) Extension Factory
+const subtextLineDecoration = Decoration.line({ class: 'discord-subtext-line' });
+const subtextSyntaxDecoration = Decoration.mark({ class: 'discord-subtext-syntax' });
+const hideSyntaxDecoration = Decoration.replace({});
+
+function createDiscordSubtextViewPlugin(plugin: DiscordSubtextPlugin) {
+	return ViewPlugin.fromClass(
+		class {
+			decorations: DecorationSet;
+
+			constructor(view: EditorView) {
+				this.decorations = this.buildDecorations(view);
+			}
+
+			update(update: ViewUpdate) {
+				if (update.docChanged || update.viewportChanged || update.selectionSet) {
+					this.decorations = this.buildDecorations(update.view);
+				}
+			}
+
+			buildDecorations(view: EditorView): DecorationSet {
+				const builder = new RangeSetBuilder<Decoration>();
+				const isLivePreview = view.state.field(editorLivePreviewField);
+				const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+
+				for (const { from, to } of view.visibleRanges) {
+					for (let pos = from; pos <= to; ) {
+						const line = view.state.doc.lineAt(pos);
+						if (line.text.startsWith('-# ')) {
+							builder.add(line.from, line.from, subtextLineDecoration);
+
+							const shouldHide =
+								plugin.settings.hideSyntaxInLivePreview &&
+								isLivePreview &&
+								line.number !== cursorLine;
+
+							if (shouldHide) {
+								builder.add(line.from, line.from + 3, hideSyntaxDecoration);
+							} else {
+								builder.add(line.from, line.from + 3, subtextSyntaxDecoration);
+							}
+						}
+						pos = line.to + 1;
+					}
+				}
+				return builder.finish();
+			}
+		},
+		{
+			decorations: (v) => v.decorations
+		}
+	);
+}
+
+// 3. Main Plugin Class
+export default class DiscordSubtextPlugin extends Plugin {
+	settings: DiscordSubtextSettings = { ...DEFAULT_SETTINGS };
+
 
 	async onload() {
 		await this.loadSettings();
+		this.applyStyles();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
+		// Command to toggle "-# " on the active line
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+			id: 'toggle-discord-subtext',
+			name: 'Toggle Discord subtext (-#)',
+			editorCallback: (editor: Editor) => {
+				const cursor = editor.getCursor();
+				const lineText = editor.getLine(cursor.line);
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+				if (lineText.startsWith('-# ')) {
+					editor.replaceRange(
+						'',
+						{ line: cursor.line, ch: 0 },
+						{ line: cursor.line, ch: 3 }
+					);
+				} else {
+					editor.replaceRange('-# ', { line: cursor.line, ch: 0 });
 				}
-				return false;
-			},
+			}
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		// Register Live Preview extension & Reading View post-processor
+		this.registerEditorExtension(createDiscordSubtextViewPlugin(this));
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
+		this.registerMarkdownPostProcessor((element) => {
+			const paragraphs = element.querySelectorAll('p');
+			paragraphs.forEach((p) => {
+				if (p.textContent?.startsWith('-# ')) {
+					p.classList.add('discord-subtext');
+					if (p.firstChild && p.firstChild.nodeType === Node.TEXT_NODE) {
+						p.firstChild.textContent = p.firstChild.textContent!.replace(/^-#\s+/, '');
+					}
+				}
+			});
 		});
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
+		// Register the Settings Tab
+		this.addSettingTab(new DiscordSubtextSettingTab(this.app, this));
 	}
 
-	onunload() {}
+	onunload() {
+		// Clean up custom CSS variables when plugin is disabled
+		document.body.style.removeProperty('--discord-subtext-size');
+		document.body.style.removeProperty('--discord-subtext-color');
+	}
 
 	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
-		);
+		const loadedData = (await this.loadData()) as Partial<DiscordSubtextSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
 	}
+
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		this.applyStyles();
+	}
+
+	applyStyles() {
+		document.body.style.setProperty('--discord-subtext-size', `${this.settings.fontSize}em`);
+		document.body.style.setProperty('--discord-subtext-color', this.settings.textColor);
 	}
 }
 
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
+// 4. Settings Tab UI
+class DiscordSubtextSettingTab extends PluginSettingTab {
+	plugin: DiscordSubtextPlugin;
+
+	constructor(app: App, plugin: DiscordSubtextPlugin) {
+		super(app, plugin);
+		this.plugin = plugin;
 	}
 
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
+	display(): void {
+		const { containerEl } = this;
+		containerEl.empty();
+
+		new Setting(containerEl)
+			.setName('Font size (em)')
+			.setDesc('Relative size of the subtext compared to normal text (default: 0.82).')
+			.addSlider((slider) =>
+				slider
+					.setLimits(0.6, 1.0, 0.02)
+					.setValue(this.plugin.settings.fontSize)
+					.onChange(async (value) => {
+						this.plugin.settings.fontSize = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Text color')
+			.setDesc('Accepts any valid CSS color (e.g., var(--text-muted), #888888, or gray).')
+			.addText((text) =>
+				text
+					.setPlaceholder('var(--text-muted)')
+					.setValue(this.plugin.settings.textColor)
+					.onChange(async (value) => {
+						this.plugin.settings.textColor = value.trim() || DEFAULT_SETTINGS.textColor;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Hide "-# " syntax in Live Preview')
+			.setDesc('Automatically hide the "-# " prefix unless your cursor is on that line.')
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.hideSyntaxInLivePreview)
+					.onChange(async (value) => {
+						this.plugin.settings.hideSyntaxInLivePreview = value;
+						await this.plugin.saveSettings();
+					})
+			);
 	}
 }
