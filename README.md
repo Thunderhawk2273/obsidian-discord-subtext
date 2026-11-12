@@ -1,5 +1,4 @@
 # Discord Subtext for Obsidian
-Disclaimer: Made with assistance from AI
 
 A lightweight Obsidian plugin that adds Discord-style `-# ` subtext formatting. Any line starting with `-# ` renders as smaller, muted text in both Live Preview and Reading View.
 
